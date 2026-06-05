@@ -1,5 +1,5 @@
 """Word document template cloning engine."""
-
+# -*- coding: utf-8 -*-
 import copy
 from pathlib import Path
 from docx import Document
@@ -60,7 +60,6 @@ def clone_word_template(
 
 def _replace_title(doc: Document, title: str):
     """Replace the centered bold title paragraph."""
-    # Find the title paragraph (typically paragraph 1, centered)
     target_para = None
     for i, para in enumerate(doc.paragraphs):
         if i == 1 and para.alignment and para.alignment == 1:  # CENTER
@@ -89,11 +88,9 @@ def _replace_date(doc: Document, date_str: str, ns_w: str):
     if not doc.tables:
         return
     table = doc.tables[0]
-    # Date is typically in row 0, col 1 (merged)
     if len(table.rows) > 0 and len(table.rows[0].cells) > 1:
         cell = table.rows[0].cells[1]
         para = cell.paragraphs[0]
-        # 修改第一个 run 的文本，保留格式
         if para.runs:
             para.runs[0].text = date_str
         else:
@@ -109,7 +106,6 @@ def _replace_main_topic(doc: Document, topic: str, ns_w: str):
     table = doc.tables[0]
     if len(table.rows) > 2 and len(table.rows[2].cells) > 1:
         cell = table.rows[2].cells[1]
-        # 修改第一个 run 的文本，保留格式
         if cell.paragraphs and cell.paragraphs[0].runs:
             cell.paragraphs[0].runs[0].text = topic
         else:
@@ -121,73 +117,92 @@ def _replace_main_topic(doc: Document, topic: str, ns_w: str):
 
 
 def _replace_process_record(doc: Document, content: str):
-    """Replace the full process record in the merged cell (row 3, col 0).
+    """
+    Replace process record by directly manipulating XML text nodes.
     
-    Key insight: The template uses EMPTY paragraphs for spacing between sections.
-    We must preserve these empty paragraphs by reusing existing paragraph elements
-    (clearing their text) rather than deleting and recreating them.
+    CORE PRINCIPLE: Preserve ALL <w:p> paragraph elements exactly as-is.
+    Only replace text inside <w:t> nodes. This guarantees 100% format 
+    consistency (spacing, indentation, line-spacing) with the template.
+    
+    Empty paragraphs in the template are kept as-is (they control spacing).
+    If new content has more lines than template paragraphs, extra paragraphs
+    are appended with the same pPr as the last template paragraph.
     """
     if not doc.tables:
         return
     table = doc.tables[0]
     if len(table.rows) <= 3:
         return
-    
+
     cell = table.rows[3].cells[0]
     ns_w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     
-    # Get all existing paragraphs in the cell (KEEP the elements, don't delete)
-    existing_paragraphs = list(cell.paragraphs)
+    # Get ALL <w:p> elements in the cell (preserve order)
+    p_list = cell._tc.findall(f'{{{ns_w}}}p')
     
-    # Save the pPr (paragraph properties) from each template paragraph
-    # (for adding new paragraphs if content exceeds template length)
-    template_pPr_list = []
-    for para in existing_paragraphs:
-        p_elem = para._element
+    if not p_list:
+        return
+    
+    # Save the pPr of the LAST non-empty paragraph (for appending if needed)
+    last_pPr = None
+    for p_elem in reversed(p_list):
         pPr = p_elem.find(f'{{{ns_w}}}pPr')
-        template_pPr_list.append(pPr)
+        if pPr is not None:
+            last_pPr = copy.deepcopy(pPr)
+            break
     
-    # Step 1: Clear text from ALL existing paragraphs
-    # (remove all <w:r> elements, but KEEP the <w:p> element itself)
-    for para in existing_paragraphs:
-        p_elem = para._element
-        # Remove all <w:r> elements (which contain the text)
+    # Step 1: Clear ALL text from ALL <w:t> nodes in ALL paragraphs
+    # (but KEEP the <w:p> and <w:pPr> elements!)
+    for p_elem in p_list:
         for r_elem in p_elem.findall(f'{{{ns_w}}}r'):
-            p_elem.remove(r_elem)
-        # Remove <w:bookmarkStart> and <w:bookmarkEnd> if present
-        for bm in p_elem.findall(f'{{{ns_w}}}bookmarkStart'):
-            p_elem.remove(bm)
-        for bm in p_elem.findall(f'{{{ns_w}}}bookmarkEnd'):
-            p_elem.remove(bm)
+            t_elem = r_elem.find(f'{{{ns_w}}}t')
+            if t_elem is not None:
+                t_elem.text = ''
     
-    # Step 2: Set text for each line of new content
+    # Step 2: Fill new content into existing <w:r> elements line-by-line
+    # Strategy: each line of new content goes into one <w:p> paragraph.
+    # We reuse the FIRST <w:r> in the paragraph, and CLEAR other <w:r> elements.
     lines = content.strip().split('\n')
-    for i, line in enumerate(lines):
-        if i < len(existing_paragraphs):
-            # Reuse existing paragraph (its pPr is already preserved)
-            para = existing_paragraphs[i]
-        else:
-            # Need to add a new paragraph (content exceeds template length)
-            para = cell.add_paragraph()
-            # Apply pPr from the last template paragraph
-            if template_pPr_list and template_pPr_list[-1] is not None:
-                p_elem = para._element
-                # Remove existing pPr (if any)
-                existing_pPr = p_elem.find(f'{{{ns_w}}}pPr')
-                if existing_pPr is not None:
-                    p_elem.remove(existing_pPr)
-                # Insert saved pPr (must be first child)
-                p_elem.insert(0, copy.deepcopy(template_pPr_list[-1]))
-        
-        # Add run with text and formatting
-        run = para.add_run(line)
-        run.font.name = '宋体'
-        run.font.size = Pt(12)
     
-    # Step 3: Leave any remaining template paragraphs EMPTY
-    # (this is crucial for preserving spacing from empty paragraphs)
-    # No action needed - we already cleared ALL paragraphs in Step 1
-    # The empty paragraphs remain as empty <w:p> elements with pPr preserved
+    for i, line in enumerate(lines):
+        if i < len(p_list):
+            p_elem = p_list[i]
+            # Find the first <w:r> that has a <w:t>
+            r_list = p_elem.findall(f'{{{ns_w}}}r')
+            target_r = None
+            for r_elem in r_list:
+                t_elem = r_elem.find(f'{{{ns_w}}}t')
+                if t_elem is not None:
+                    target_r = r_elem
+                    break
+            
+            if target_r is None:
+                # No <w:t> found, create one
+                t_elem = etree.SubElement(r_list[0] if r_list else p_elem, f'{{{ns_w}}}t')
+                t_elem.text = line
+            else:
+                t_elem = target_r.find(f'{{{ns_w}}}t')
+                t_elem.text = line
+            
+            # Remove extra <w:r> elements (keep only the first one with text)
+            for r_elem in list(r_list):
+                t_elem = r_elem.find(f'{{{ns_w}}}t')
+                if t_elem is not None and t_elem.text == line:
+                    continue  # Keep this one
+                # Remove extra <w:r> (but not the one we just filled)
+                if r_elem != target_r:
+                    p_elem.remove(r_elem)
+        else:
+            # New content exceeds template length: append new <w:p>
+            new_p = etree.SubElement(cell._tc, f'{{{ns_w}}}p')
+            if last_pPr is not None:
+                new_p.append(copy.deepcopy(last_pPr))
+            new_r = etree.SubElement(new_p, f'{{{ns_w}}}r')
+            new_t = etree.SubElement(new_r, f'{{{ns_w}}}t')
+            new_t.text = line
+    
+    # Step 3: All remaining template paragraphs stay EMPTY (preserving spacing)
+    # (nothing to do - we already cleared their text in Step 1)
 
 
 def _clear_cell_text(cell, ns_w: str):
