@@ -55,3 +55,9 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Test outputs
+test_output.docx
+*.test.docx
+*.test.xlsx
+*.test.pptx
