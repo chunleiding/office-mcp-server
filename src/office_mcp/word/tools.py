@@ -17,6 +17,7 @@ def word_clone_template(
     date: str = None,
     main_topic: str = None,
     process_record: str = None,
+    process_record_file: str = None,
     ctx: Context = None,
 ) -> dict:
     """
@@ -32,6 +33,9 @@ def word_clone_template(
         date: (Optional) New date string (replaces date in table).
         main_topic: (Optional) New main topic (replaces topic in table).
         process_record: (Optional) Full process record text (replaces merged cell content).
+        process_record_file: (Optional) Path to file containing process record text.
+            If both process_record and process_record_file are provided,
+            process_record_file takes priority.
     
     Returns:
         Dict with success status and output path.
@@ -44,8 +48,18 @@ def word_clone_template(
             replacements["date"] = date
         if main_topic:
             replacements["main_topic"] = main_topic
-        if process_record:
-            replacements["process_record"] = process_record
+        
+        # Handle process_record from file or direct input
+        final_process_record = process_record
+        if process_record_file:
+            try:
+                with open(process_record_file, 'r', encoding='utf-8') as f:
+                    final_process_record = f.read()
+            except Exception as file_e:
+                return {"success": False, "error": f"Failed to read process_record_file: {str(file_e)}"}
+        
+        if final_process_record:
+            replacements["process_record"] = final_process_record
 
         result = clone_word_template(
             template_path=template_path,
