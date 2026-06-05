@@ -80,7 +80,7 @@ def word_clone_template(
     Returns:
         Dict with success status and output path.
     """
-    sys.path.insert(0, _SRC_DIR)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from office_mcp.word.template import clone_word_template as do_clone
 
     try:
