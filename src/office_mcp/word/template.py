@@ -121,7 +121,12 @@ def _replace_main_topic(doc: Document, topic: str, ns_w: str):
 
 
 def _replace_process_record(doc: Document, content: str):
-    """Replace the full process record in the merged cell (row 3, col 0)."""
+    """Replace the full process record in the merged cell (row 3, col 0).
+    
+    Key insight: The template uses EMPTY paragraphs for spacing between sections.
+    We must preserve these empty paragraphs by reusing existing paragraph elements
+    (clearing their text) rather than deleting and recreating them.
+    """
     if not doc.tables:
         return
     table = doc.tables[0]
@@ -131,51 +136,58 @@ def _replace_process_record(doc: Document, content: str):
     cell = table.rows[3].cells[0]
     ns_w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     
-    # 保存模板段落的 pPr (段落格式 XML)
+    # Get all existing paragraphs in the cell (KEEP the elements, don't delete)
+    existing_paragraphs = list(cell.paragraphs)
+    
+    # Save the pPr (paragraph properties) from each template paragraph
+    # (for adding new paragraphs if content exceeds template length)
     template_pPr_list = []
-    for para in cell.paragraphs:
+    for para in existing_paragraphs:
         p_elem = para._element
         pPr = p_elem.find(f'{{{ns_w}}}pPr')
-        if pPr is not None:
-            template_pPr_list.append(copy.deepcopy(pPr))
-        else:
-            template_pPr_list.append(None)
+        template_pPr_list.append(pPr)
     
-    # 清除所有段落的 XML 元素
-    tc = cell._tc
-    for para in list(cell.paragraphs):
+    # Step 1: Clear text from ALL existing paragraphs
+    # (remove all <w:r> elements, but KEEP the <w:p> element itself)
+    for para in existing_paragraphs:
         p_elem = para._element
-        parent = p_elem.getparent()
-        if parent is not None:
-            parent.remove(p_elem)
+        # Remove all <w:r> elements (which contain the text)
+        for r_elem in p_elem.findall(f'{{{ns_w}}}r'):
+            p_elem.remove(r_elem)
+        # Remove <w:bookmarkStart> and <w:bookmarkEnd> if present
+        for bm in p_elem.findall(f'{{{ns_w}}}bookmarkStart'):
+            p_elem.remove(bm)
+        for bm in p_elem.findall(f'{{{ns_w}}}bookmarkEnd'):
+            p_elem.remove(bm)
     
-    # 添加新段落，应用原格式
+    # Step 2: Set text for each line of new content
     lines = content.strip().split('\n')
     for i, line in enumerate(lines):
-        new_para = cell.add_paragraph()
-        
-        # 应用模板段落的 pPr (段落格式)
-        if i < len(template_pPr_list):
-            pPr = template_pPr_list[i]
-        elif template_pPr_list:
-            pPr = template_pPr_list[-1]
+        if i < len(existing_paragraphs):
+            # Reuse existing paragraph (its pPr is already preserved)
+            para = existing_paragraphs[i]
         else:
-            pPr = None
+            # Need to add a new paragraph (content exceeds template length)
+            para = cell.add_paragraph()
+            # Apply pPr from the last template paragraph
+            if template_pPr_list and template_pPr_list[-1] is not None:
+                p_elem = para._element
+                # Remove existing pPr (if any)
+                existing_pPr = p_elem.find(f'{{{ns_w}}}pPr')
+                if existing_pPr is not None:
+                    p_elem.remove(existing_pPr)
+                # Insert saved pPr (must be first child)
+                p_elem.insert(0, copy.deepcopy(template_pPr_list[-1]))
         
-        if pPr is not None:
-            # 将保存的 pPr 应用到新段落
-            new_p_elem = new_para._element
-            # 移除现有的 pPr
-            existing_pPr = new_p_elem.find(f'{{{ns_w}}}pPr')
-            if existing_pPr is not None:
-                new_p_elem.remove(existing_pPr)
-            # 插入保存的 pPr (必须是第一个子元素)
-            new_p_elem.insert(0, copy.deepcopy(pPr))
-        
-        # 添加 run 并设置字体
-        run = new_para.add_run(line)
+        # Add run with text and formatting
+        run = para.add_run(line)
         run.font.name = '宋体'
         run.font.size = Pt(12)
+    
+    # Step 3: Leave any remaining template paragraphs EMPTY
+    # (this is crucial for preserving spacing from empty paragraphs)
+    # No action needed - we already cleared ALL paragraphs in Step 1
+    # The empty paragraphs remain as empty <w:p> elements with pPr preserved
 
 
 def _clear_cell_text(cell, ns_w: str):
