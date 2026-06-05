@@ -125,68 +125,57 @@ def _replace_process_record(doc: Document, content: str):
     if not doc.tables:
         return
     table = doc.tables[0]
-    if len(table.rows) > 3:
-        cell = table.rows[3].cells[0]
+    if len(table.rows) <= 3:
+        return
+    
+    cell = table.rows[3].cells[0]
+    ns_w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    
+    # 保存模板段落的 pPr (段落格式 XML)
+    template_pPr_list = []
+    for para in cell.paragraphs:
+        p_elem = para._element
+        pPr = p_elem.find(f'{{{ns_w}}}pPr')
+        if pPr is not None:
+            template_pPr_list.append(copy.deepcopy(pPr))
+        else:
+            template_pPr_list.append(None)
+    
+    # 清除所有段落的 XML 元素
+    tc = cell._tc
+    for para in list(cell.paragraphs):
+        p_elem = para._element
+        parent = p_elem.getparent()
+        if parent is not None:
+            parent.remove(p_elem)
+    
+    # 添加新段落，应用原格式
+    lines = content.strip().split('\n')
+    for i, line in enumerate(lines):
+        new_para = cell.add_paragraph()
         
-        # 保存原段落格式（在清除之前）
-        original_formats = []
-        for para in cell.paragraphs:
-            fmt = {
-                "alignment": para.alignment,
-                "left_indent": para.paragraph_format.left_indent,
-                "right_indent": para.paragraph_format.right_indent,
-                "first_line_indent": para.paragraph_format.first_line_indent,
-                "line_spacing": para.paragraph_format.line_spacing,
-                "line_spacing_rule": para.paragraph_format.line_spacing_rule,
-                "space_before": para.paragraph_format.space_before,
-                "space_after": para.paragraph_format.space_after,
-            }
-            original_formats.append(fmt)
+        # 应用模板段落的 pPr (段落格式)
+        if i < len(template_pPr_list):
+            pPr = template_pPr_list[i]
+        elif template_pPr_list:
+            pPr = template_pPr_list[-1]
+        else:
+            pPr = None
         
-        # 清除所有段落的 XML 元素
-        tc = cell._tc
-        for para in list(cell.paragraphs):
-            p_elem = para._element
-            parent = p_elem.getparent()
-            if parent is not None:
-                parent.remove(p_elem)
+        if pPr is not None:
+            # 将保存的 pPr 应用到新段落
+            new_p_elem = new_para._element
+            # 移除现有的 pPr
+            existing_pPr = new_p_elem.find(f'{{{ns_w}}}pPr')
+            if existing_pPr is not None:
+                new_p_elem.remove(existing_pPr)
+            # 插入保存的 pPr (必须是第一个子元素)
+            new_p_elem.insert(0, copy.deepcopy(pPr))
         
-        # 添加新段落，应用原格式
-        lines = content.strip().split('\n')
-        for i, line in enumerate(lines):
-            new_para = cell.add_paragraph()
-            
-            # 应用原段落格式
-            if i < len(original_formats):
-                fmt = original_formats[i]
-            elif original_formats:
-                # 如果新行数超过原段落数，使用最后一个原段落的格式
-                fmt = original_formats[-1]
-            else:
-                fmt = None
-            
-            if fmt:
-                if fmt["alignment"] is not None:
-                    new_para.alignment = fmt["alignment"]
-                pf = new_para.paragraph_format
-                if fmt["left_indent"] is not None:
-                    pf.left_indent = fmt["left_indent"]
-                if fmt["right_indent"] is not None:
-                    pf.right_indent = fmt["right_indent"]
-                if fmt["first_line_indent"] is not None:
-                    pf.first_line_indent = fmt["first_line_indent"]
-                if fmt["line_spacing"] is not None:
-                    pf.line_spacing = fmt["line_spacing"]
-                if fmt["line_spacing_rule"] is not None:
-                    pf.line_spacing_rule = fmt["line_spacing_rule"]
-                if fmt["space_before"] is not None:
-                    pf.space_before = fmt["space_before"]
-                if fmt["space_after"] is not None:
-                    pf.space_after = fmt["space_after"]
-            
-            run = new_para.add_run(line)
-            run.font.name = '宋体'
-            run.font.size = Pt(12)
+        # 添加 run 并设置字体
+        run = new_para.add_run(line)
+        run.font.name = '宋体'
+        run.font.size = Pt(12)
 
 
 def _clear_cell_text(cell, ns_w: str):
