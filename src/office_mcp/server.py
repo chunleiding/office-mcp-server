@@ -4,7 +4,16 @@
 Supports Word/Excel/PPT document automation via MCP tools.
 """
 
+# Add src/ to sys.path BEFORE any other imports so that
+# "import office_mcp.*" and "from office_mcp.* import ..." work
+# when the file is executed as `python -m office_mcp.server`.
 import sys
+from pathlib import Path
+
+_SRC_DIR = str(Path(__file__).resolve().parent.parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
 import argparse
 from fastmcp import FastMCP
 
