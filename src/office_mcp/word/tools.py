@@ -3,6 +3,7 @@
 from fastmcp import FastMCP, Context
 from pathlib import Path
 from .template import clone_word_template, analyze_template
+from .table_parser import parse_table_format, analyze_table_merge, format_table_analysis
 
 # Initialize FastMCP server
 mcp = FastMCP("office-word")
@@ -72,10 +73,29 @@ def word_analyze_template(
     
     Returns:
         Dict describing the document structure and replaceable fields.
+        Also includes table format information in 'table_format' field.
     """
     try:
+        from docx import Document
+        
         result = analyze_template(template_path)
-        return {"success": True, "structure": result}
+        
+        # NEW: Add table format analysis
+        table_format = []
+        try:
+            doc = Document(template_path)
+            for table in doc.tables:
+                format_info = format_table_analysis(table)
+                table_format.append(format_info)
+        except Exception as tf_e:
+            # Don't fail the whole request if table format analysis fails
+            table_format = {"error": str(tf_e)}
+        
+        return {
+            "success": True,
+            "structure": result,
+            "table_format": table_format,  # NEW field
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -137,6 +157,7 @@ def word_read_document(
     
     Returns:
         Dict with document text content and structure info.
+        Also includes table cell format information in 'tables[].cell_format'.
     """
     try:
         from docx import Document
@@ -158,11 +179,19 @@ def word_read_document(
             for row in table.rows:
                 row_data = [cell.text.strip() for cell in row.cells]
                 table_data.append(row_data)
+            
+            # NEW: Add cell format information
+            try:
+                cell_format = format_table_analysis(table)
+            except Exception as tf_e:
+                cell_format = {"error": str(tf_e)}
+            
             tables.append({
                 "table_index": ti,
                 "rows": len(table.rows),
                 "cols": len(table.columns),
-                "data": table_data,
+                "data": table_data,  # Original field, untouched
+                "cell_format": cell_format,  # NEW field
             })
         
         return {
