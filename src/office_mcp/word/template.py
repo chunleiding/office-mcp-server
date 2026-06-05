@@ -60,18 +60,28 @@ def clone_word_template(
 
 def _replace_title(doc: Document, title: str):
     """Replace the centered bold title paragraph."""
-    for para in doc.paragraphs:
-        # Title is typically paragraph index 1, centered, bold
-        if para.alignment and para.alignment == 1:  # CENTER
-            for run in para.runs:
-                if run.bold:
-                    run.text = title
-                    return
-    # Fallback: just set paragraph 1
-    if len(doc.paragraphs) > 1:
-        para = doc.paragraphs[1]
-        for run in para.runs:
-            run.text = title
+    # Find the title paragraph (typically paragraph 1, centered)
+    target_para = None
+    for i, para in enumerate(doc.paragraphs):
+        if i == 1 and para.alignment and para.alignment == 1:  # CENTER
+            target_para = para
+            break
+
+    if target_para is None and len(doc.paragraphs) > 1:
+        target_para = doc.paragraphs[1]
+
+    if target_para is None:
+        return
+
+    # Clear ALL runs, then set the first run to the new title
+    for run in target_para.runs:
+        run.text = ''
+    if target_para.runs:
+        target_para.runs[0].text = title
+        target_para.runs[0].bold = True
+    else:
+        run = target_para.add_run(title)
+        run.bold = True
 
 
 def _replace_date(doc: Document, date_str: str, ns_w: str):
@@ -96,12 +106,12 @@ def _replace_main_topic(doc: Document, topic: str, ns_w: str):
     table = doc.tables[0]
     if len(table.rows) > 2 and len(table.rows[2].cells) > 1:
         cell = table.rows[2].cells[1]
-        # Find and replace text in runs
-        for para in cell.paragraphs:
-            for run in para.runs:
-                if run.text.strip():
-                    run.text = topic
-                    return
+        # Clear all text in the cell via XML, then set new topic
+        _clear_cell_text(cell, ns_w)
+        para = cell.paragraphs[0]
+        run = para.add_run(topic)
+        run.font.name = '宋体'
+        run.font.size = Pt(12)
 
 
 def _replace_process_record(doc: Document, content: str):
